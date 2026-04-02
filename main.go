@@ -12,13 +12,14 @@ import (
 const (
 	botToken     = "8680477535:AAGoZjz6DB9nIt_FZdICFOOAvB12xjFt0Ag"
 	chatID       = -5275988185
-	locationName = "PT DIGIMAX DAKSA NINRAKARA -  Podomoro Golf View, Jl. Mochamad Thohir No.10 Ruko Granada B3, Bojong Nangka, Kec. Gn. Putri, Kabupaten Bogor, Jawa Barat 16953"
-	interval     = 30 * time.Second
+	locationName = "PT DIGIMAX DAKSA NINRAKARA - Podomoro Golf View"
+	autoInterval = 30 * time.Minute 
 	pingLimit    = 100 * time.Millisecond
-	minDownload  = 10.0 
+	minDownload  = 10.0
 )
 
 func runSpeedTest() string {
+	log.Println("⏳ Starting Speedtest...")
 	user, err := speedtest.FetchUserInfo()
 	if err != nil {
 		return "🚨 *SYSTEM ERROR*: Target ISP unreachable."
@@ -40,19 +41,18 @@ func runSpeedTest() string {
 	latency := s.Latency.Round(time.Millisecond)
 
 	isAnomalous := latency > pingLimit || downloadMbps < minDownload
-	
-	statusHeader := "✅ SYSTEM STABLE"
+	statusHeader := "✅ SYSTEM MONITORING INET - OFFICE"
 	alertMessage := ""
 
 	if isAnomalous {
 		statusHeader = "🚨 ANOMALY DETECTED"
-		alertMessage = "\n⚠️ *CRITICAL ALERT*:\n- High Latency or Low Bandwidth detected.\n- Please check Physical Cables/Fiber Optic.\n- Consider restarting the Gateway/ONT."
+		alertMessage = "\n⚠️ *CRITICAL ALERT*:\n- High Latency or Low Bandwidth detected.\n- Check physical cables/fiber optics.\n- Restart Gateway/ONT if necessary."
 	}
 
-	report := fmt.Sprintf(
+	return fmt.Sprintf(
 		"🌐 *%s*\n"+
 			"───────────────────\n"+
-			"📍 *LOCATION* : `%s`\n"+ 
+			"📍 *LOCATION* : `%s`\n"+
 			"📡 *NETWORK PROFILE*\n"+
 			"• *ISP* : `%s`\n"+
 			"• *Node* : `%s (%s)`\n"+
@@ -62,44 +62,55 @@ func runSpeedTest() string {
 			"• *Upload* : `%.2f Mbps`\n"+
 			"• *Latency* : `%s`\n"+
 			"───────────────────\n"+
-			"🕒 *TIMESTAMP* : `%s`\n"+
-			"%s",
-		statusHeader,
-		locationName,
-		user.Isp,
-		s.Name, s.Country,
-		downloadMbps,
-		uploadMbps,
-		latency,
-		time.Now().Format("Jan 02, 2006 | 15:04:05"),
-		alertMessage,
+			"🕒 *TIMESTAMP* : `%s`\n%s",
+		statusHeader, locationName, user.Isp, s.Name, s.Country,
+		downloadMbps, uploadMbps, latency,
+		time.Now().Format("Jan 02, 2006 | 15:04:05"), alertMessage,
 	)
-
-	return report
 }
 
 func main() {
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
-		log.Panic("Failed to initialize bot: ", err)
+		log.Panic("Bot initialization failed: ", err)
 	}
 
-	log.Printf("🚀 Network Guard active for location: %s", locationName)
+	log.Printf("🚀 Network Guard Active: %s", bot.Self.UserName)
 
-	for {
-		log.Println("🔄 Running speedtest for " + locationName)
-		report := runSpeedTest()
+	go func() {
+		for {
+			report := runSpeedTest()
+			msg := tgbotapi.NewMessage(int64(chatID), "🕒 *SCHEDULED REPORT*\n\n"+report)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+			time.Sleep(autoInterval)
+		}
+	}()
 
-		msg := tgbotapi.NewMessage(int64(chatID), report)
-		msg.ParseMode = "Markdown"
-		
-		_, err := bot.Send(msg)
-		if err != nil {
-			log.Printf("❌ Failed to send Telegram message: %v", err)
-		} else {
-			log.Println("✅ Report delivered for " + locationName)
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates := bot.GetUpdatesChan(u)
+
+	for update := range updates {
+		if update.Message == nil {
+			continue
 		}
 
-		time.Sleep(interval)
+		if update.Message.IsCommand() && update.Message.Command() == "cek" {
+			log.Printf("📩 Manual request from: %s", update.Message.From.UserName)
+			
+			waitMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "⏳ *Testing network speed...* Please wait.")
+			waitMsg.ParseMode = "Markdown"
+			sentWait, _ := bot.Send(waitMsg)
+
+			report := runSpeedTest()
+
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "📊 *MANUAL CHECK RESULT*\n\n"+report)
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+
+			del := tgbotapi.NewDeleteMessage(update.Message.Chat.ID, sentWait.MessageID)
+			bot.Request(del)
+		}
 	}
 }
