@@ -1,4 +1,4 @@
-Markdown# 📡 Network Guard Bot
+## 📡 Network Guard Bot
 
 A high-precision Telegram bot built with **Go (Golang)** designed to monitor network performance. It provides automated speed tests every 30 minutes and real-time diagnostics on demand, optimized for high-speed fiber connections (100Mbps+).
 
