@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,9 +16,13 @@ const (
 	botToken     = "8680477535:AAGoZjz6DB9nIt_FZdICFOOAvB12xjFt0Ag"
 	chatID       = -5275988185
 	autoInterval = 30 * time.Minute
+	pingLimit    = 50 * time.Millisecond
+	minDownload  = 60.0
+)
 
-	pingLimit   = 50 * time.Millisecond
-	minDownload = 60.0
+var (
+	autoReportActive = true
+	mu               sync.RWMutex
 )
 
 func getWIBTime() string {
@@ -28,20 +33,16 @@ func getWIBTime() string {
 	return time.Now().In(loc).Format("02 Jan 2006 | 15:04:05") + " WIB"
 }
 
-// getLocationAddress melakukan reverse geocoding dari koordinat ke nama kota dan kecamatan
-func getLocationAddress(lat, lon string) (kota, kecamatan string) {
-	url := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?format=json&lat=%s&lon=%s&zoom=12&accept-language=id", lat, lon)
+func getLocationAddress(lat, lon string) (city, district string) {
+	url := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?format=json&lat=%s&lon=%s&zoom=12&accept-language=en", lat, lon)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "Tidak Diketahui", "Tidak Diketahui"
-	}
+	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "inetmonitor/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "Tidak Diketahui", "Tidak Diketahui"
+		return "Unknown", "Unknown"
 	}
 	defer resp.Body.Close()
 
@@ -59,47 +60,38 @@ func getLocationAddress(lat, lon string) (kota, kecamatan string) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "Tidak Diketahui", "Tidak Diketahui"
+		return "Unknown", "Unknown"
 	}
 
-	// Tentukan nama kota (prioritas: city > town > state_district)
-	kota = result.Address.City
-	if kota == "" {
-		kota = result.Address.Town
+	city = result.Address.City
+	if city == "" {
+		city = result.Address.Town
 	}
-	if kota == "" {
-		kota = result.Address.StateDistrict
+	if city == "" {
+		city = result.Address.StateDistrict
 	}
-	if kota == "" {
-		kota = result.Address.State
-	}
-	if kota == "" {
-		kota = "Tidak Diketahui"
+	if city == "" {
+		city = result.Address.State
 	}
 
-	// Tentukan nama kecamatan (prioritas: district > suburb > village)
-	kecamatan = result.Address.District
-	if kecamatan == "" {
-		kecamatan = result.Address.Suburb
+	district = result.Address.District
+	if district == "" {
+		district = result.Address.Suburb
 	}
-	if kecamatan == "" {
-		kecamatan = result.Address.Village
+	if district == "" {
+		district = result.Address.Village
 	}
-	if kecamatan == "" {
-		kecamatan = result.Address.Regency
-	}
-	if kecamatan == "" {
-		kecamatan = "Tidak Diketahui"
+	if district == "" {
+		district = result.Address.Regency
 	}
 
-	return kota, kecamatan
+	return city, district
 }
 
 func runSpeedTest() string {
-	log.Println("⏳ Starting Real-Time Diagnostics (High Accuracy)...")
+	log.Println("⏳ Starting Real-Time Diagnostics...")
 
 	stClient := speedtest.New()
-
 	user, err := stClient.FetchUserInfo()
 	if err != nil {
 		return "🚨 *SYSTEM ERROR*: Failed to detect location & ISP via IP."
@@ -107,13 +99,11 @@ func runSpeedTest() string {
 
 	serverList, _ := stClient.FetchServers()
 	targets, _ := serverList.FindServer([]int{})
-
 	if len(targets) == 0 {
 		return "🚨 *SYSTEM ERROR*: No test server responded."
 	}
 
 	s := targets[0]
-
 	s.PingTest(nil)
 	s.DownloadTest()
 	s.UploadTest()
@@ -134,15 +124,16 @@ func runSpeedTest() string {
 		alertMsg = "\n⚠️ *ADVISORY*:\n- Performance below 100Mbps standard.\n- Check physical connection or ISP outage.\n"
 	}
 
-	kota, kecamatan := getLocationAddress(user.Lat, user.Lon)
+	city, district := getLocationAddress(user.Lat, user.Lon)
 	currentTime := getWIBTime()
 
 	return fmt.Sprintf(
 		"🌐 *%s*\n"+
 			"━━━━━━━━━━━━━━━━━━\n"+
 			"📍 *DETECTED LOCATION*\n"+
-			"├ *Kota* : `%s`\n"+
-			"└ *Kecamatan* : `%s`\n"+
+			"├ *City* : `%s`\n"+
+			"├ *District* : `%s`\n"+
+			"└ *Coords* : `%s, %s`\n"+
 			"━━━━━━━━━━━━━━━━━━\n"+
 			"📡 *NETWORK PROFILE*\n"+
 			"├ *ISP* : `%s`\n"+
@@ -157,7 +148,7 @@ func runSpeedTest() string {
 			"%s"+
 			"🕒 *REPORT TIME*\n`%s`",
 		statusHeader,
-		kota, kecamatan,
+		city, district, user.Lat, user.Lon,
 		user.Isp, user.IP, s.Name, s.Country,
 		downloadMbps, uploadMbps, latency, s.Jitter,
 		alertMsg,
@@ -174,19 +165,28 @@ func main() {
 	log.Printf("🚀 Network Guard Active: %s", bot.Self.UserName)
 
 	commands := []tgbotapi.BotCommand{
-		{Command: "cekdong", Description: "Run a speedtest now"},
-		{Command: "daftarmenu", Description: "Show help menu"},
+		{Command: "check", Description: "Run a speedtest now"},
+		{Command: "startbot", Description: "Enable automatic reporting"},
+		{Command: "stopbot", Description: "Disable automatic reporting"},
+		{Command: "menu", Description: "Show help menu"},
 	}
 	bot.Request(tgbotapi.NewSetMyCommands(commands...))
 
 	go func() {
 		for {
-			report := runSpeedTest()
-			msg := tgbotapi.NewMessage(int64(chatID), "📢 *AUTOMATED STATUS REPORT*\n\n"+report)
-			msg.ParseMode = "Markdown"
-			bot.Send(msg)
+			mu.RLock()
+			active := autoReportActive
+			mu.RUnlock()
 
-			log.Printf("✅ Automated report sent: %s", getWIBTime())
+			if active {
+				report := runSpeedTest()
+				msg := tgbotapi.NewMessage(int64(chatID), "📢 *AUTOMATED STATUS REPORT*\n\n"+report)
+				msg.ParseMode = "Markdown"
+				bot.Send(msg)
+				log.Printf("✅ Automated report sent: %s", getWIBTime())
+			} else {
+				log.Println("💤 Auto-report is currently DISABLED.")
+			}
 			time.Sleep(autoInterval)
 		}
 	}()
@@ -203,17 +203,13 @@ func main() {
 		if update.Message.IsCommand() {
 			switch update.Message.Command() {
 
-			case "cekdong":
-				log.Printf("📩 Manual request from: %s", update.Message.From.UserName)
-
+			case "check":
 				bot.Send(tgbotapi.NewChatAction(update.Message.Chat.ID, tgbotapi.ChatTyping))
-
 				waitMsg := tgbotapi.NewMessage(update.Message.Chat.ID, "⏳ *Analyzing network, please wait...*")
 				waitMsg.ParseMode = "Markdown"
 				sentWait, _ := bot.Send(waitMsg)
 
 				report := runSpeedTest()
-
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "📑 *MANUAL DIAGNOSTIC REPORT*\n\n"+report)
 				msg.ParseMode = "Markdown"
 				bot.Send(msg)
@@ -221,12 +217,28 @@ func main() {
 				del := tgbotapi.NewDeleteMessage(update.Message.Chat.ID, sentWait.MessageID)
 				bot.Request(del)
 
-			case "daftarmenu":
-				helpText := "🛠️ *NETWORK GUARD INTERFACE*\n\n" +
-					"🚀 `/cekdong` - Run a manual speedtest.\n" +
-					"📋 `/daftarmenu` - Show this help menu.\n\n" +
-					"💡 _System automatically reports every 30 minutes._"
+			case "stopbot":
+				mu.Lock()
+				autoReportActive = false
+				mu.Unlock()
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🛑 *Automatic reporting has been DISABLED.*")
+				msg.ParseMode = "Markdown"
+				bot.Send(msg)
 
+			case "startbot":
+				mu.Lock()
+				autoReportActive = true
+				mu.Unlock()
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "▶️ *Automatic reporting has been ENABLED.*")
+				msg.ParseMode = "Markdown"
+				bot.Send(msg)
+
+			case "menu":
+				helpText := "🛠️ *NETWORK GUARD INTERFACE*\n\n" +
+					"🚀 `/check` - Run a manual speedtest.\n" +
+					"▶️ `/startbot` - Enable 30m auto-reports.\n" +
+					"🛑 `/stopbot` - Disable auto-reports.\n" +
+					"📋 `/menu` - Show this help menu."
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, helpText)
 				msg.ParseMode = "Markdown"
 				bot.Send(msg)
