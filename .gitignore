@@ -1,0 +1,12 @@
+# Binaries
+inetmonitor
+internet-monitor
+
+# Environment variables
+.env
+
+# Go dependencies
+vendor/
+
+# System files
+.DS_Store

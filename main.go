@@ -5,19 +5,25 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/joho/godotenv"
 	"github.com/showwin/speedtest-go/speedtest"
 )
 
 const (
-	botToken     = "8680477535:AAGoZjz6DB9nIt_FZdICFOOAvB12xjFt0Ag"
-	chatID       = -5275988185
 	autoInterval = 30 * time.Minute
 	pingLimit    = 50 * time.Millisecond
 	minDownload  = 60.0
+)
+
+var (
+	botToken string
+	chatID   int64
 )
 
 var (
@@ -157,6 +163,27 @@ func runSpeedTest() string {
 }
 
 func main() {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment variables")
+	}
+
+	botToken = os.Getenv("BOT_TOKEN")
+	if botToken == "" {
+		log.Fatal("BOT_TOKEN environment variable is required")
+	}
+
+	chatIDStr := os.Getenv("CHAT_ID")
+	if chatIDStr == "" {
+		log.Fatal("CHAT_ID environment variable is required")
+	}
+
+	var err error
+	chatID, err = strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		log.Fatalf("Invalid CHAT_ID: %v", err)
+	}
+
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Panic("Failed to initialize bot: ", err)
@@ -180,7 +207,7 @@ func main() {
 
 			if active {
 				report := runSpeedTest()
-				msg := tgbotapi.NewMessage(int64(chatID), "📢 *AUTOMATED STATUS REPORT*\n\n"+report)
+				msg := tgbotapi.NewMessage(chatID, "📢 *AUTOMATED STATUS REPORT*\n\n"+report)
 				msg.ParseMode = "Markdown"
 				bot.Send(msg)
 				log.Printf("✅ Automated report sent: %s", getWIBTime())

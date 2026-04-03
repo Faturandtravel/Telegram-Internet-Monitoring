@@ -8,6 +8,7 @@ require (
 	github.com/chelnak/ysmrr v0.5.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/showwin/speedtest-go v1.7.10 // indirect
