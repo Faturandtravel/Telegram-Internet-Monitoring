@@ -1,4 +1,4 @@
-# Go Network Guard & Speedtest Bot
+# Telegram Internet Monitoring
 
 A high-performance automated network monitoring tool written in **Go**. This bot tracks internet connection quality, detects location data via reverse geocoding, and sends diagnostic reports to a designated Telegram chat.
 
